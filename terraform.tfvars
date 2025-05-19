@@ -1,0 +1,5 @@
+region          = "ap-south-1"
+instance_type   = "t3.medium"
+ami_id          = "ami-0e35ddab05955cf57"
+key_name        = "key2025"
+s3_bucket_name  = "shareds3bucketec2"
