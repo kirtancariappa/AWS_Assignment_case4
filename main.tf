@@ -62,22 +62,80 @@ resource "aws_security_group" "instance_sg" {
   }
 }
 
+# Create S3 Bucket
+
 resource "aws_s3_bucket" "shared_bucket" {
   bucket = var.s3_bucket_name
   force_destroy = true
 
+  tags = {
+    Name = "SharedEC2S3Bucket"
+  }
 }
 
-resource "aws_instance" "ec2_instances" {
+# IAM Role for EC2 to Access S3
+
+resource "aws_iam_role" "ec2_s3_access" {
+  name = "EC2S3AccessRole"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+# Attach S3 policy
+resource "aws_iam_role_policy_attachment" "s3_access_attach" {
+  role       = aws_iam_role.ec2_s3_access.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+}
+
+# Create instance profile
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "EC2S3InstanceProfile"
+  role = aws_iam_role.ec2_s3_access.name
+}
+
+
+# Launch 3 EC2 instances
+
+resource "aws_instance" "ec2" {
   count         = 3
   ami           = var.ami_id
   instance_type = var.instance_type
   subnet_id     = aws_subnet.az_subnets[count.index].id
   key_name      = var.key_name
   security_groups = [aws_security_group.instance_sg.id]
-  user_data     = file("user_data.sh")
+
+  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
+  
 
   tags = {
-    Name = "ec2-${count.index + 1}"
+    Name = "ec2-instance-${count.index + 1}"
   }
+  user_data = <<-EOF
+              #!/bin/bash
+              sudo apt update -y
+              sudo apt install -y software-properties-common
+              sudo add-apt-repository -y ppa:sebastian-stenzel/cryptomator
+              sudo apt update -y
+              sudo apt install -y s3fs
+              mkdir -p /mnt/s3bucket
+              s3fs ${aws_s3_bucket.shared_bucket.bucket} /mnt/s3bucket -o iam_role=auto -o allow_other
+              sudo yum update -y
+              sudo yum install -y docker.io git unzip
+
+              # Start Docker
+              sudo systemctl start docker
+              sudo systemctl enable docker
+
+              EOF
 }
